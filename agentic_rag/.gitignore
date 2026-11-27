@@ -1,0 +1,19 @@
+# Python Virtual Environment
+ai-class-env/
+.venv/
+venv/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+.env.*
+
+# Temporary / Database files
+data/
+*.index
+*.bin
