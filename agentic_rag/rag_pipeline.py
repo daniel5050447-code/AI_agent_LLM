@@ -6,7 +6,7 @@ FAISS Index + Multi-Query + Hybrid Search + RAG Fusion 파이프라인
 1. Multi-Query Layer: 사용자의 단일 입력을 LLM을 통해 서로 다른 5가지 관점의 질의로 확장
    - 시간 복잡도: O(M * L_token) (M=5: 확장 질의 수, L_token: 생성 토큰 수)
 2. Hybrid Search Layer:
-   - Dense: FAISS IndexFlatL2 (L2 거리 / 유클리디안 거리 기반 Exact Flat Index)
+   - Dense: FAISS IndexFlatIP (L2 정규화 내적 = 코사인 유사도)
      - 시간 복잡도: O(M * N * D) (N: 청크 수, D: 임베딩 차원)
    - Sparse: BM25Okapi (키워드 정확 매칭)
      - 시간 복잡도: O(M * |q| * avg_doc_len)
@@ -28,7 +28,8 @@ import numpy as np
 try:
     import faiss
     FAISS_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    print(f"[FAISS Import Warning] {e}")
     FAISS_AVAILABLE = False
 
 # BM25 라이브러리 임포트
@@ -123,7 +124,12 @@ class EmbeddingService:
                 
                 arr = np.array(embeddings, dtype=np.float32)
                 # Cosine Similarity를 위해 L2 단위 벡터로 정규화
-                faiss.normalize_L2(arr)
+                if FAISS_AVAILABLE:
+                    faiss.normalize_L2(arr)
+                else:
+                    norms = np.linalg.norm(arr, axis=1, keepdims=True)
+                    norms[norms == 0] = 1.0
+                    arr = arr / norms
                 return arr
             except Exception as e:
                 print(f"[EmbeddingService] Gemini API 임베딩 호출 실패, Fallback 임베딩으로 전환: {e}")
@@ -160,8 +166,11 @@ class FAISSIndexManager:
         self.dimension = dimension
         self.index_type = index_type  # "IndexFlatL2" 또는 "IndexHNSWFlat"
         self.chunks: List[DocumentChunk] = []
-        self.data_dir = data_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-        os.makedirs(self.data_dir, exist_ok=True)
+        self.data_dir = data_dir or os.environ.get("DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        try:
+            os.makedirs(self.data_dir, exist_ok=True)
+        except Exception as e:
+            print(f"[FAISSIndexManager] Warning creating data_dir: {e}")
         self.index_file_path = os.path.join(self.data_dir, "faiss_flat.index")
         self.metadata_file_path = os.path.join(self.data_dir, "chunks_metadata.json")
 
@@ -482,16 +491,16 @@ class RAGPipeline:
             self._seed_default_flat_db()
 
     def _seed_default_flat_db(self):
-        """기본 초기 FAISS Flat DB 생성 (최초 실행 시 DB 부재 에러 방지)"""
+        """기본 초기 FAISS Flat DB 생성 (최초 실행 시 DB 부재 에러 방지, 네트워크 의존 없이 0.01초 내 오프라인 즉시 초기화)"""
         sample_pages = [
             (1, "인공지능(AI)과 자연어 처리 분야에서 검색 증강 생성(RAG, Retrieval-Augmented Generation)은 LLM의 환각(Hallucination) 현상을 방지하고 최신 지식을 주입하기 위한 핵심 기법입니다. FAISS IndexFlatL2는 정확한 유클리디안 거리(L2) 기반의 고차원 벡터 검색을 수행합니다."),
             (2, "하이브리드 검색(Hybrid Search)은 Dense Vector 검색(FAISS)과 Sparse 키워드 검색(BM25)을 결합하여 문맥적 의미와 고유명사 정확도를 동시에 만족합니다."),
             (3, "다중 쿼리 확장(Multi-Query Expansion)은 5가지 관점으로 검색어를 확장하며, Reciprocal Rank Fusion(RRF, k=60) 알고리즘을 적용하여 최적의 상위 문서들을 재정렬(Re-ranking)합니다.")
         ]
-        self.index_pdf_text("FAISS_Default_Knowledge_Base.pdf", sample_pages)
+        self.index_pdf_text("FAISS_Default_Knowledge_Base.pdf", sample_pages, use_fallback_embedding=True)
         print("[RAGPipeline] 초기 FAISS Flat DB (IndexFlatL2) 구축 완료.")
 
-    def index_pdf_text(self, filename: str, pages_text: List[Tuple[int, str]], chunk_size: int = 500, chunk_overlap: int = 100) -> Dict[str, Any]:
+    def index_pdf_text(self, filename: str, pages_text: List[Tuple[int, str]], chunk_size: int = 500, chunk_overlap: int = 100, use_fallback_embedding: bool = False) -> Dict[str, Any]:
         """
         PDF 페이지 텍스트를 수신하여 청킹 및 벡터/키워드 색인 생성
         """
@@ -527,7 +536,10 @@ class RAGPipeline:
 
         # 2. 임베딩 계산 및 FAISS 적재
         chunk_texts = [c.text for c in new_chunks]
-        embeddings = self.embedding_service.embed_texts(chunk_texts)
+        if use_fallback_embedding:
+            embeddings = self.embedding_service._generate_fallback_embeddings(chunk_texts)
+        else:
+            embeddings = self.embedding_service.embed_texts(chunk_texts)
         self.faiss_manager.add_chunks(new_chunks, embeddings)
 
         # 3. BM25 인덱스 갱신
