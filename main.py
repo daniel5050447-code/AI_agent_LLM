@@ -58,6 +58,8 @@ def root():
     return {
         "service": "Advanced RAG Server",
         "status": "online",
+        "gemini_api_key_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "port": os.getenv("PORT", "8080"),
         "indexed_chunks_count": len(rag_pipeline.all_chunks),
         "faiss_index_type": rag_pipeline.faiss_manager.index_type,
         "faiss_flat_db_path": rag_pipeline.faiss_manager.index_file_path,
@@ -82,6 +84,8 @@ def health_check():
     """Cloud Run 헬스체크 및 연동 상태 확인 엔드포인트"""
     return {
         "status": "healthy",
+        "gemini_api_key_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "port": os.getenv("PORT", "8080"),
         "indexed_chunks": len(rag_pipeline.all_chunks),
         "faiss_index_type": rag_pipeline.faiss_manager.index_type,
         "faiss_flat_db_file": os.path.basename(rag_pipeline.faiss_manager.index_file_path),
