@@ -179,7 +179,9 @@ async def execute_rag_query(req: QueryRequest):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"RAG 질의 처리 실패: {str(e)}")
+        import traceback
+        print(f"[ERROR] execute_rag_query: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"RAG 질의 처리 실패: {repr(e)}")
 
 
 @app.get("/api/rag/stream")
